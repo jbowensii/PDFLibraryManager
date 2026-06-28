@@ -7,10 +7,11 @@
 ## Completed Tasks
 
 - Task 1: Database Models & Schema (commits 2806485..88483b1, review clean)
+- Task 2: Authentication & JWT (commit df0a0b1, 28 tests passing, review clean)
 
 ## Current
 
-Task 2: Authentication & JWT (in progress)
+Task 3: Core Book CRUD API (in progress)
 
 ## Pending
 
