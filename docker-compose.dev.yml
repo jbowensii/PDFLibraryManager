@@ -1,0 +1,102 @@
+version: '3.8'
+
+services:
+  # PostgreSQL database
+  postgres:
+    image: postgres:14-alpine
+    environment:
+      POSTGRES_DB: pdf_library
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: devpass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Redis (for task queue, caching)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  # FastAPI Backend (with hot reload)
+  backend:
+    build:
+      context: ./src/backend
+      dockerfile: Dockerfile.dev
+    environment:
+      DATABASE_URL: postgresql://dev:devpass@postgres:5432/pdf_library
+      REDIS_URL: redis://redis:6379
+      DEBUG: "true"
+      PYTHONUNBUFFERED: 1
+      LOG_LEVEL: DEBUG
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src/backend:/app
+      - /app/__pycache__
+      - test_library:/library
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
+
+  # Celery Worker (for background jobs)
+  celery:
+    build:
+      context: ./src/backend
+      dockerfile: Dockerfile.dev
+    environment:
+      DATABASE_URL: postgresql://dev:devpass@postgres:5432/pdf_library
+      REDIS_URL: redis://redis:6379
+      PYTHONUNBUFFERED: 1
+      LOG_LEVEL: DEBUG
+    volumes:
+      - ./src/backend:/app
+      - /app/__pycache__
+      - test_library:/library
+    depends_on:
+      - postgres
+      - redis
+    command: celery -A app.worker worker --loglevel=info --concurrency=2
+    restart: unless-stopped
+
+  # React Frontend (with hot reload)
+  frontend:
+    build:
+      context: ./src/frontend
+      dockerfile: Dockerfile.dev
+    environment:
+      REACT_APP_API_URL: http://localhost:8000/api/v1
+      REACT_APP_DEBUG: "true"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./src/frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    command: npm start
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  test_library:
+
+networks:
+  default:
+    name: pdf-lm-dev

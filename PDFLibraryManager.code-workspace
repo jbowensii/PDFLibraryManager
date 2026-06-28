@@ -1,0 +1,181 @@
+{
+  "folders": [
+    {
+      "path": ".",
+      "name": "📚 PDF Library Manager"
+    },
+    {
+      "path": "src/backend",
+      "name": "🐍 Backend (Python/FastAPI)"
+    },
+    {
+      "path": "src/frontend",
+      "name": "⚛️  Frontend (React/TypeScript)"
+    },
+    {
+      "path": "docs",
+      "name": "📖 Documentation"
+    }
+  ],
+  "settings": {
+    "python.defaultInterpreterPath": "${workspaceFolder:🐍 Backend (Python/FastAPI)}/venv/bin/python",
+    "python.linting.enabled": true,
+    "python.linting.pylintEnabled": false,
+    "python.linting.flake8Enabled": true,
+    "python.linting.mypyEnabled": true,
+    "python.formatting.provider": "black",
+    "python.testing.pytestEnabled": true,
+    "python.testing.pytestArgs": [
+      "tests"
+    ],
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "[python]": {
+      "editor.defaultFormatter": "ms-python.python",
+      "editor.formatOnSave": true
+    },
+    "[javascript]": {
+      "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+    "[typescript]": {
+      "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+    "[json]": {
+      "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+    "files.exclude": {
+      "**/__pycache__": true,
+      "**/*.pyc": true,
+      "**/node_modules": true,
+      "**/.env": true,
+      "**/.env.local": true
+    },
+    "search.exclude": {
+      "**/__pycache__": true,
+      "**/node_modules": true,
+      "**/.git": true,
+      "**/venv": true
+    }
+  },
+  "extensions": {
+    "recommendations": [
+      "ms-python.python",
+      "ms-python.vscode-pylance",
+      "esbenp.prettier-vscode",
+      "dbaeumer.vscode-eslint",
+      "ms-vscode.extension-pack-for-python",
+      "eamodio.gitlens",
+      "ms-docker.remote-containers",
+      "ms-azuretools.vscode-docker",
+      "ms-vscode-remote.remote-containers",
+      "ms-vscode-remote.remote-wsl",
+      "ms-vscode-remote.remote-ssh",
+      "charliermarsh.ruff",
+      "ms-vsliveshare.vsliveshare-audio",
+      "redhat.vscode-yaml",
+      "ms-vscode.makefile-tools"
+    ]
+  },
+  "launch": {
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Python: FastAPI",
+        "type": "python",
+        "request": "launch",
+        "module": "uvicorn",
+        "args": [
+          "app.main:app",
+          "--reload",
+          "--host",
+          "0.0.0.0",
+          "--port",
+          "8000"
+        ],
+        "jinja": true,
+        "justMyCode": true,
+        "cwd": "${workspaceFolder:🐍 Backend (Python/FastAPI)}"
+      },
+      {
+        "name": "Python: Celery Worker",
+        "type": "python",
+        "request": "launch",
+        "module": "celery",
+        "args": [
+          "-A",
+          "app.worker",
+          "worker",
+          "--loglevel=info"
+        ],
+        "jinja": true,
+        "justMyCode": true,
+        "cwd": "${workspaceFolder:🐍 Backend (Python/FastAPI)}"
+      }
+    ]
+  },
+  "tasks": {
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "Docker: Start Dev Environment",
+        "type": "shell",
+        "command": "docker-compose",
+        "args": [
+          "-f",
+          "docker-compose.dev.yml",
+          "up"
+        ],
+        "presentation": {
+          "reveal": "always",
+          "panel": "shared"
+        },
+        "group": {
+          "kind": "build",
+          "isDefault": true
+        }
+      },
+      {
+        "label": "Docker: Stop Dev Environment",
+        "type": "shell",
+        "command": "docker-compose",
+        "args": [
+          "-f",
+          "docker-compose.dev.yml",
+          "down"
+        ],
+        "presentation": {
+          "reveal": "always",
+          "panel": "shared"
+        }
+      },
+      {
+        "label": "Backend: Run Tests",
+        "type": "shell",
+        "command": "pytest",
+        "args": [
+          "tests/",
+          "-v",
+          "--cov=app"
+        ],
+        "cwd": "${workspaceFolder:🐍 Backend (Python/FastAPI)}",
+        "presentation": {
+          "reveal": "always",
+          "panel": "shared"
+        }
+      },
+      {
+        "label": "Frontend: Run Tests",
+        "type": "shell",
+        "command": "npm",
+        "args": [
+          "test"
+        ],
+        "cwd": "${workspaceFolder:⚛️  Frontend (React/TypeScript)}",
+        "presentation": {
+          "reveal": "always",
+          "panel": "shared"
+        }
+      }
+    ]
+  }
+}

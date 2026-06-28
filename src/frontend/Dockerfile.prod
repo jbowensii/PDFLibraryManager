@@ -1,0 +1,27 @@
+# Build stage
+FROM node:18-alpine as builder
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+ENV REACT_APP_DEBUG=false
+RUN npm run build
+
+# Runtime stage
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Install serve to serve static files
+RUN npm install -g serve
+
+COPY --from=builder /app/build ./build
+
+ENV REACT_APP_API_URL=http://localhost:8000/api/v1
+
+EXPOSE 3000
+
+CMD ["serve", "-s", "build", "-l", "3000"]
