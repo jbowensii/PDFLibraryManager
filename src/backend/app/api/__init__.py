@@ -2,10 +2,14 @@
 
 from fastapi import APIRouter
 
+from .auth import router as auth_router
+
 router = APIRouter()
 
+# Include authentication router
+router.include_router(auth_router, prefix="/auth", tags=["Authentication"])
+
 # These will be implemented in subsequent steps
-# from .auth import router as auth_router
 # from .books import router as books_router
 # from .library import router as library_router
 # from .search import router as search_router
@@ -13,7 +17,6 @@ router = APIRouter()
 # from .duplicates import router as duplicates_router
 # from .admin import router as admin_router
 
-# router.include_router(auth_router, prefix="/auth", tags=["Authentication"])
 # router.include_router(books_router, prefix="/books", tags=["Books"])
 # router.include_router(library_router, prefix="/library", tags=["Library"])
 # router.include_router(search_router, prefix="/search", tags=["Search"])

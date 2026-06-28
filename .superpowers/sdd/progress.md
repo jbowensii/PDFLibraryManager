@@ -6,11 +6,11 @@
 
 ## Completed Tasks
 
-(none yet)
+- Task 1: Database Models & Schema (commits 2806485..88483b1, review clean)
 
 ## Current
 
-Task 1: Database Models & Schema (in progress)
+Task 2: Authentication & JWT (in progress)
 
 ## Pending
 
