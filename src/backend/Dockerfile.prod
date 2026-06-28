@@ -12,7 +12,7 @@ RUN pip wheel --no-cache-dir --no-deps --wheel-dir /app/wheels -r requirements.t
 # Final stage
 FROM python:3.11-slim
 
-# Install runtime dependencies for OCR and image processing
+# Install runtime dependencies for OCR, image processing, and supervisor
 RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     tesseract-ocr-eng \
@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y \
     libxrender-dev \
     libgomp1 \
     curl \
+    supervisor \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -39,12 +40,38 @@ RUN pip install --no-cache /wheels/*
 COPY . .
 
 # Create necessary directories
-RUN mkdir -p /app/logs /app/uploads /library
+RUN mkdir -p /app/logs /app/uploads /library /etc/supervisor/conf.d
+
+# Create supervisor config for running both API and Celery worker
+RUN cat > /etc/supervisor/conf.d/pdf-library.conf << 'EOF'
+[supervisord]
+logfile=/app/logs/supervisord.log
+pidfile=/var/run/supervisord.pid
+nodaemon=true
+
+[program:api]
+command=gunicorn -w 4 -b 0.0.0.0:8000 -k uvicorn.workers.UvicornWorker app.main:app
+directory=/app
+autostart=true
+autorestart=true
+stderr_logfile=/app/logs/api.err
+stdout_logfile=/app/logs/api.log
+umask=0022
+
+[program:celery]
+command=celery -A app.worker.celery_app worker --loglevel=info --concurrency=2
+directory=/app
+autostart=true
+autorestart=true
+stderr_logfile=/app/logs/celery.err
+stdout_logfile=/app/logs/celery.log
+umask=0022
+EOF
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
 EXPOSE 8000
 
-# Run with Gunicorn (production-grade WSGI server)
-CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:8000", "-k", "uvicorn.workers.UvicornWorker", "app.main:app"]
+# Run supervisord to manage both API and Celery
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/../supervisord.conf"]

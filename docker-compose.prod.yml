@@ -4,6 +4,7 @@ services:
   # PostgreSQL database
   postgres:
     image: postgres:14-alpine
+    container_name: pdf-lm-postgres
     environment:
       POSTGRES_DB: ${DB_NAME:-pdf_library}
       POSTGRES_USER: ${DB_USER}
@@ -21,13 +22,15 @@ services:
   # Redis (for task queue, caching)
   redis:
     image: redis:7-alpine
+    container_name: pdf-lm-redis
     volumes:
       - /mnt/user/appdata/pdf-lm/redis:/data
     restart: unless-stopped
 
-  # FastAPI Backend
-  backend:
-    image: ghcr.io/${GITHUB_USERNAME}/pdf-lm-backend:${IMAGE_TAG:-latest}
+  # FastAPI Backend + Celery Worker (consolidated)
+  pdf-lm:
+    image: ghcr.io/${GITHUB_USERNAME}/pdf-lm:${IMAGE_TAG:-latest}
+    container_name: pdf-lm-backend
     environment:
       DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-pdf_library}
       REDIS_URL: redis://redis:6379
@@ -52,32 +55,16 @@ services:
       timeout: 10s
       retries: 3
 
-  # Celery Worker
-  celery:
-    image: ghcr.io/${GITHUB_USERNAME}/pdf-lm-backend:${IMAGE_TAG:-latest}
-    environment:
-      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-pdf_library}
-      REDIS_URL: redis://redis:6379
-      LOG_LEVEL: INFO
-    volumes:
-      - /mnt/user/PDFGameVault:/library
-      - /mnt/user/appdata/pdf-lm/uploads:/app/uploads
-      - /mnt/user/appdata/pdf-lm/logs:/app/logs
-    depends_on:
-      - postgres
-      - redis
-    command: celery -A app.worker worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-4}
-    restart: unless-stopped
-
   # React Frontend
   frontend:
     image: ghcr.io/${GITHUB_USERNAME}/pdf-lm-frontend:${IMAGE_TAG:-latest}
+    container_name: pdf-lm-frontend
     environment:
       REACT_APP_API_URL: ${API_URL:-http://localhost:8000/api/v1}
     ports:
       - "${WEB_PORT:-3000}:3000"
     depends_on:
-      - backend
+      - pdf-lm
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000"]
