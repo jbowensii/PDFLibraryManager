@@ -1,74 +1,30 @@
-# Web Framework & Server
+# Web framework
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 gunicorn==21.2.0
 pydantic==2.5.0
-pydantic-settings==2.1.0
+python-multipart==0.0.6
 
 # Database
 sqlalchemy==2.0.23
 psycopg2-binary==2.9.9
-alembic==1.13.0
 
-# Async & Task Queue
+# Task queue
 celery==5.3.4
 redis==5.0.1
-python-dotenv==1.0.0
 
-# Authentication & Security
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-PyJWT==2.8.1
-cryptography==41.0.7
+# Auth
+bcrypt==4.1.1
+PyJWT==2.8.0
 
-# PDF Processing
-PyPDF2==3.0.1
-pdfplumber==0.10.3
-PyMuPDF==1.23.8
-reportlab==4.0.9
-
-# OCR
+# PDF and OCR (Tesseract via system package; PaddleOCR is an optional
+# runtime extra -- the pipeline degrades gracefully when absent)
+pypdf==3.17.1
 pytesseract==0.3.10
-paddleocr==2.7.0.2
-easyocr==1.7.0
-
-# Image Processing
-opencv-python==4.8.1.78
-Pillow==10.1.0
-scikit-image==0.22.0
+opencv-python-headless==4.8.1.78
 numpy==1.24.3
 
-# Metadata Lookup & Matching
+# Metadata lookup and matching
 requests==2.31.0
 fuzzywuzzy==0.18.0
 python-Levenshtein==0.23.0
-beautifulsoup4==4.12.2
-
-# Database Utilities & Full-Text Search
-psycopg[binary]==3.17.0
-
-# Logging & Monitoring
-python-json-logger==2.0.7
-structlog==24.1.0
-
-# Testing
-pytest==7.4.3
-pytest-asyncio==0.23.2
-pytest-cov==4.1.0
-httpx==0.25.2
-faker==22.0.0
-
-# Development & Debugging
-black==23.12.0
-flake8==6.1.0
-mypy==1.7.1
-isort==5.13.2
-debugpy==1.8.0
-
-# Data Validation & Serialization
-marshmallow==3.20.1
-orjson==3.9.10
-
-# Utilities
-python-multipart==0.0.6
-email-validator==2.1.0

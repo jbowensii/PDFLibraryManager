@@ -1,5 +1,5 @@
-"""Business logic services."""
+"""Application services."""
 
-from .book_service import BookService, BookQueryParams
+from .scan_service import ScanService, BookQueryParams
 
-__all__ = ["BookService", "BookQueryParams"]
+__all__ = ['ScanService', 'BookQueryParams']

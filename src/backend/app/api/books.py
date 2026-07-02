@@ -1,239 +1,110 @@
-"""Book API endpoints for CRUD operations."""
+"""
+Books API endpoints - list, get details, and delete books.
+"""
 
-from typing import Optional
-
-from fastapi import APIRouter, Depends, HTTPException, Query, status, Header
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.database import get_db
-from app.models import User, Book
-from app.schemas import BookResponse
-from app.services import BookService, BookQueryParams
-from app.auth.jwt_handler import decode_token
+from ..models import Book, User
+from ..schemas import BookResponse, BookDetailResponse
+from ..database import get_db
+from .auth import get_current_user
 
 router = APIRouter()
 
 
-class BookUpdateRequest(BaseModel):
-    """Request schema for updating a book."""
-
-    title: Optional[str] = None
-    author: Optional[str] = None
-    publisher: Optional[str] = None
-
-
-async def get_current_user(
-    authorization: Optional[str] = Header(None), db: Session = Depends(get_db)
-) -> User:
-    """
-    Dependency to extract current user from Bearer token.
-
-    Args:
-        authorization: Authorization header with Bearer token.
-        db: Database session.
-
-    Returns:
-        User object if token is valid.
-
-    Raises:
-        HTTPException: 401 if token is missing or invalid.
-        HTTPException: 404 if user not found in database.
-    """
-    if not authorization:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing authorization header",
-        )
-
-    # Extract Bearer token
-    parts = authorization.split()
-    if len(parts) != 2 or parts[0].lower() != "bearer":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authorization header format",
-        )
-
-    token = parts[1]
-
-    # Decode token
-    payload = decode_token(token)
-    if not payload:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-        )
-
-    # Extract user_id from token payload
-    user_id = payload.get("sub")
-    if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token payload",
-        )
-
-    # Query user from database
-    try:
-        user_id_int = int(user_id)
-    except (ValueError, TypeError):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid user ID in token",
-        )
-
-    user = db.query(User).filter(User.id == user_id_int).first()
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found",
-        )
-
-    return user
-
-
-@router.get("/")
+@router.get('/', response_model=dict)
 async def list_books(
+    skip: int = 0,
+    limit: int = 20,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
-    title: Optional[str] = None,
-    author: Optional[str] = None,
-    publisher: Optional[str] = None,
-):
+) -> dict:
     """
-    List books with pagination and optional filtering.
+    List books with pagination.
 
-    Query Parameters:
-        - page: Page number (default: 1)
-        - limit: Items per page (default: 20, max: 100)
-        - title: Filter by title (case-insensitive, optional)
-        - author: Filter by author (case-insensitive, optional)
-        - publisher: Filter by publisher (case-insensitive, optional)
+    Args:
+        skip: Number of books to skip
+        limit: Number of books to return
+        db: Database session
+        user: Current authenticated user
 
     Returns:
-        Dictionary with items, total, page, limit, pages
+        dict: Total count and list of books
     """
-    params = BookQueryParams(
-        page=page, limit=limit, title=title, author=author, publisher=publisher
-    )
+    # Get total count
+    total = db.query(Book).count()
 
-    result = BookService.list_books(db, params)
-
-    # Transform items to BookResponse objects
-    items = [BookResponse.model_validate(book) for book in result["items"]]
+    # Get paginated results
+    books = db.query(Book).offset(skip).limit(limit).all()
 
     return {
-        "items": items,
-        "total": result["total"],
-        "page": result["page"],
-        "limit": result["limit"],
-        "pages": result["pages"],
+        "total": total,
+        "items": [BookResponse.from_orm(book) for book in books]
     }
 
 
-@router.get("/{book_id}")
+@router.get('/{book_id}', response_model=BookDetailResponse)
 async def get_book(
     book_id: int,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-):
+) -> BookDetailResponse:
     """
-    Get a single book by ID.
+    Get detailed information about a specific book.
 
     Args:
-        book_id: The ID of the book to retrieve.
+        book_id: ID of the book
+        db: Database session
+        user: Current authenticated user
 
     Returns:
-        BookResponse with book details.
+        BookDetailResponse: Detailed book information
+
+    Raises:
+        HTTPException: If book not found
     """
-    book = BookService.get_book(db, book_id)
+    book = db.query(Book).filter(Book.id == book_id).first()
+
     if not book:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Book not found",
+            detail=f"Book {book_id} not found"
         )
 
-    return BookResponse.model_validate(book)
+    return BookDetailResponse.from_orm(book)
 
 
-@router.patch("/{book_id}")
-async def update_book(
-    book_id: int,
-    update_request: BookUpdateRequest,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    """
-    Update a book's metadata (curator+ only).
-
-    Only users with 'admin' or 'curator' role can update book metadata.
-    When updated, metadata_locked is set to True.
-
-    Args:
-        book_id: The ID of the book to update.
-        update_request: BookUpdateRequest containing fields to update.
-
-    Returns:
-        Updated BookResponse.
-    """
-    # Check permissions
-    if user.role not in ["admin", "curator"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Insufficient permissions. Only admin and curator can update books.",
-        )
-
-    # Update book with metadata_locked=True
-    updated_book = BookService.update_book(
-        db,
-        book_id,
-        title=update_request.title,
-        author=update_request.author,
-        publisher=update_request.publisher,
-        metadata_locked=True,
-    )
-
-    if not updated_book:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Book not found",
-        )
-
-    return BookResponse.model_validate(updated_book)
-
-
-@router.delete("/{book_id}")
+@router.delete('/{book_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def delete_book(
     book_id: int,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-):
+) -> None:
     """
-    Delete a book (admin only).
+    Delete a book. Only admins can delete books.
 
     Args:
-        book_id: The ID of the book to delete.
+        book_id: ID of the book to delete
+        db: Database session
+        user: Current authenticated user
 
-    Returns:
-        Status message.
+    Raises:
+        HTTPException: If user is not admin or book not found
     """
-    # Check permissions (admin only)
-    if user.role != "admin":
+    if user.role != 'admin':
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin only. Only administrators can delete books.",
+            detail="Only admins can delete books"
         )
 
-    # Find and delete book
-    book = BookService.get_book(db, book_id)
+    book = db.query(Book).filter(Book.id == book_id).first()
+
     if not book:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Book not found",
+            detail=f"Book {book_id} not found"
         )
 
     db.delete(book)
     db.commit()
-
-    return {"status": "deleted"}

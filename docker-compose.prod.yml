@@ -1,25 +1,20 @@
-version: '3.8'
-
 services:
-  # PostgreSQL database
   postgres:
     image: postgres:14-alpine
     container_name: pdf-lm-postgres
     environment:
       POSTGRES_DB: ${DB_NAME:-pdf_library}
-      POSTGRES_USER: ${DB_USER}
+      POSTGRES_USER: ${DB_USER:-pdf_user}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
       - /mnt/user/appdata/pdf-lm/postgres:/var/lib/postgresql/data
-      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init.sql
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-pdf_user}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # Redis (for task queue, caching)
   redis:
     image: redis:7-alpine
     container_name: pdf-lm-redis
@@ -27,21 +22,22 @@ services:
       - /mnt/user/appdata/pdf-lm/redis:/data
     restart: unless-stopped
 
-  # FastAPI Backend + Celery Worker (consolidated)
+  # Backend API + Celery worker (single container, managed by supervisor)
   pdf-lm:
-    image: ghcr.io/${GITHUB_USERNAME}/pdf-lm:${IMAGE_TAG:-latest}
+    image: ghcr.io/jbowensii/pdf-lm:latest
     container_name: pdf-lm-backend
     environment:
-      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-pdf_library}
-      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://${DB_USER:-pdf_user}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-pdf_library}
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      SECRET_KEY: ${SECRET_KEY}
+      LIBRARY_ROOT_PATH: /library
       DEBUG: "false"
       LOG_LEVEL: INFO
-      SECRET_KEY: ${SECRET_KEY}
     ports:
       - "${API_PORT:-8000}:8000"
     volumes:
       - /mnt/user/PDFGameVault:/library
-      - /mnt/user/appdata/pdf-lm/uploads:/app/uploads
       - /mnt/user/appdata/pdf-lm/logs:/app/logs
     depends_on:
       postgres:
@@ -55,27 +51,12 @@ services:
       timeout: 10s
       retries: 3
 
-  # React Frontend
+  # Web UI (nginx serves the SPA and proxies /api to the backend)
   frontend:
-    image: ghcr.io/${GITHUB_USERNAME}/pdf-lm-frontend:${IMAGE_TAG:-latest}
+    image: ghcr.io/jbowensii/pdf-lm-frontend:latest
     container_name: pdf-lm-frontend
-    environment:
-      REACT_APP_API_URL: ${API_URL:-http://localhost:8000/api/v1}
     ports:
       - "${WEB_PORT:-3000}:3000"
     depends_on:
       - pdf-lm
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-volumes:
-  postgres_data:
-  redis_data:
-
-networks:
-  default:
-    name: pdf-lm-prod

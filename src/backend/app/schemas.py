@@ -1,21 +1,100 @@
-"""Pydantic schemas for API request/response validation."""
+"""
+Pydantic schemas for API requests and responses.
+"""
 
 from datetime import datetime
 from typing import Optional, List
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel
+
+
+class JobResponse(BaseModel):
+    """Response schema for job status."""
+
+    id: int
+    type: str
+    status: str
+    progress_percent: int
+    error_message: Optional[str] = None
+    created_at: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class BookResponse(BaseModel):
+    """Response schema for book details."""
+
+    id: int
+    title: str
+    author: str
+    publisher: str
+    isbn: Optional[str] = None
+    ocr_status: str
+    has_embedded_text: bool
+    filename_normalized: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class BookDetailResponse(BookResponse):
+    """Detailed response schema for a single book."""
+
+    content_hash: Optional[str] = None
+    ocr_error_count: int
+    is_duplicate: bool
+    duplicate_parent_id: Optional[int] = None
+    filesystem_path: Optional[str] = None
+    file_size_bytes: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class BookSearchResponse(BaseModel):
+    """Response schema for book search results."""
+
+    id: int
+    title: str
+    author: str
+    publisher: str
+    isbn: Optional[str] = None
+
+    class Config:
+        from_attributes = True
 
 
 class UserCreate(BaseModel):
-    """Schema for creating a new user."""
+    """Request schema for creating a new user."""
 
-    username: str = Field(..., min_length=3, max_length=255, description="Unique username")
-    email: EmailStr = Field(..., description="User email address")
-    password: str = Field(..., min_length=8, description="User password (min 8 characters)")
-    role: str = Field(default="viewer", description="User role: admin, curator, or viewer")
+    username: str
+    email: str
+    password: str
+
+
+class UserUpdate(BaseModel):
+    """Request schema for updating user information."""
+
+    role: Optional[str] = None
 
 
 class UserResponse(BaseModel):
-    """Schema for user response."""
+    """Response schema for user information."""
+
+    id: int
+    username: str
+    email: str
+    role: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class UserListResponse(BaseModel):
+    """Response schema for listing users."""
 
     id: int
     username: str
@@ -27,71 +106,91 @@ class UserResponse(BaseModel):
         from_attributes = True
 
 
-class BookCreate(BaseModel):
-    """Schema for creating a new book."""
+class CollectionCreate(BaseModel):
+    """Request schema for creating a collection."""
 
-    title: str = Field(..., min_length=1, max_length=500, description="Book title")
-    author: Optional[str] = Field(None, max_length=255, description="Book author")
-    publisher: Optional[str] = Field(None, max_length=255, description="Book publisher")
-    isbn: Optional[str] = Field(None, max_length=20, description="ISBN number")
-    filesystem_path: str = Field(..., min_length=1, max_length=1024, description="File system path to PDF")
+    name: str
+    description: Optional[str] = None
 
 
-class BookResponse(BaseModel):
-    """Schema for book response."""
+class CollectionResponse(BaseModel):
+    """Response schema for a collection."""
 
     id: int
-    title: Optional[str]
-    author: Optional[str]
-    publisher: Optional[str]
-    isbn: Optional[str]
-    filesystem_path: str
-    ocr_status: str
-    metadata_confidence: Optional[float]
-    cover_image_local_path: Optional[str]
-    date_added: datetime
-
-    class Config:
-        from_attributes = True
-
-
-class JobResponse(BaseModel):
-    """Schema for job response."""
-
-    id: int
-    job_type: str
-    status: str
-    progress_percent: int
+    user_id: int
+    name: str
+    description: Optional[str] = None
     created_at: datetime
+    updated_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class CollectionDetailResponse(CollectionResponse):
+    """Detailed response schema for a collection with books."""
+
+    books: List[BookSearchResponse] = []
 
 
 class DuplicateCandidateResponse(BaseModel):
-    """Schema for duplicate candidate response."""
+    """Response schema for a duplicate candidate pair."""
 
     id: int
     book_id_1: int
     book_id_2: int
     similarity_score: float
-    metadata_match_score: Optional[float]
     status: str
+    notes: Optional[str] = None
     created_at: datetime
+    updated_at: datetime
 
     class Config:
         from_attributes = True
 
 
-class CollectionResponse(BaseModel):
-    """Schema for collection response."""
+class DuplicateResolveRequest(BaseModel):
+    """Request schema for resolving a duplicate candidate."""
+
+    keep_book_id: int
+
+
+class SearchRequest(BaseModel):
+    """Request schema for searching books."""
+
+    q: str
+    search_type: Optional[str] = 'title'  # title, author, publisher
+    limit: Optional[int] = 20
+
+
+class SearchResponse(BaseModel):
+    """Response schema for search results."""
+
+    total: int
+    items: List[BookSearchResponse]
+
+
+class AuditLogResponse(BaseModel):
+    """Response schema for audit log entries."""
 
     id: int
-    user_id: int
-    name: str
-    description: Optional[str]
-    is_shared: bool
+    user_id: Optional[int] = None
+    action: str
+    details: Optional[str] = None
     created_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class ScanRequest(BaseModel):
+    """Request schema for starting a library scan."""
+
+    source_dir: Optional[str] = None
+
+
+class ScanResponse(BaseModel):
+    """Response schema for scan start."""
+
+    status: str
+    pdfs_queued: int

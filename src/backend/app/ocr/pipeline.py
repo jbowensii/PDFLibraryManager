@@ -1,161 +1,310 @@
-"""Multi-pass OCR pipeline with Tesseract and PaddleOCR."""
+"""
+OCR pipeline for text extraction from PDFs.
 
-from typing import Tuple
+Provides functionality to check for embedded text in PDFs,
+preprocess images for OCR, run Tesseract and PaddleOCR engines,
+and detect OCR errors for quality assessment.
+"""
+
 import logging
+import re
+from typing import Tuple
+import cv2
+import numpy as np
+import pypdf
 
-import pytesseract
-import pdfplumber
-from paddleocr import PaddleOCR
+# Try to import OCR engines; gracefully handle if not installed
+try:
+    import pytesseract
+except ImportError:
+    pytesseract = None
 
-from app.ocr.error_detection import OCRErrorDetector
+try:
+    from paddleocr import PaddleOCR
+except ImportError:
+    PaddleOCR = None
 
 logger = logging.getLogger(__name__)
 
 
-class OCRPipeline:
-    """Orchestrates multi-pass OCR with fallback strategy."""
+class ImagePreprocessor:
+    """Preprocesses images for better OCR accuracy."""
 
-    def __init__(self):
-        """Initialize OCR pipeline with PaddleOCR model."""
-        try:
-            self.paddle_ocr = PaddleOCR(use_gpu=False, lang="en")
-        except Exception as e:
-            logger.error(f"Failed to initialize PaddleOCR: {e}")
-            self.paddle_ocr = None
-
-    def check_embedded_text(self, pdf_path: str, threshold: int = 500) -> bool:
+    @staticmethod
+    def preprocess(image: np.ndarray) -> np.ndarray:
         """
-        Check if PDF already has embedded text.
+        Preprocess an image for OCR.
 
-        Samples first 3 pages and checks if any contains more than threshold characters.
+        Applies techniques to improve OCR accuracy:
+        - Convert to grayscale if needed
+        - Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
+        - Apply bilateral filtering for noise reduction
+        - Apply thresholding for binarization
 
         Args:
-            pdf_path: Path to PDF file.
-            threshold: Character count threshold (default 500).
+            image: OpenCV image (BGR or grayscale)
 
         Returns:
-            True if PDF has embedded text above threshold, False otherwise.
+            Preprocessed image ready for OCR
         """
         try:
-            with pdfplumber.open(pdf_path) as pdf:
-                # Check first 3 pages
-                for page_num in range(min(3, len(pdf.pages))):
-                    page = pdf.pages[page_num]
-                    text = page.extract_text()
+            # Convert to grayscale if needed
+            if len(image.shape) == 3:
+                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            else:
+                gray = image
 
-                    if text and len(text.strip()) > threshold:
+            # Apply CLAHE for adaptive histogram equalization
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            enhanced = clahe.apply(gray)
+
+            # Apply bilateral filtering to reduce noise while preserving edges
+            denoised = cv2.bilateralFilter(enhanced, 9, 75, 75)
+
+            # Apply Otsu's thresholding for binarization
+            _, binary = cv2.threshold(denoised, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+            return binary
+        except Exception as e:
+            logger.warning(f"Preprocessing failed, returning original image: {e}")
+            return image
+
+
+class OCRErrorDetector:
+    """Detects and counts OCR errors in extracted text."""
+
+    # Common OCR error patterns
+    COMMON_ERRORS = [
+        (r'\b[0O][0O]{2,}\b', 'number-zero-confusion'),  # OOO, 000
+        (r'\b[1l|!]{2,}\b', 'one-letter-confusion'),      # lll, |||
+        (r'\b[rn]{2,}\b', 'rn-m-confusion'),              # rnrn
+        (r'[^a-zA-Z0-9\s\.,;:\'\"\-\(\)]{5,}', 'special-char-run'),  # 5+ special chars
+        (r'\b[A-Z]{10,}\b', 'all-caps-acronym'),          # Very long all-caps
+    ]
+
+    @staticmethod
+    def count_errors(text: str) -> int:
+        """
+        Count suspected OCR errors in extracted text.
+
+        Looks for common OCR error patterns including:
+        - Digit/letter confusion (0/O, 1/l)
+        - Common misrecognitions (rn as m, etc.)
+        - Unusual character sequences
+        - Garbled text patterns
+
+        Args:
+            text: Extracted text from OCR
+
+        Returns:
+            Estimated count of OCR errors
+        """
+        if not text or not text.strip():
+            return 0
+
+        error_count = 0
+
+        for pattern, error_type in OCRErrorDetector.COMMON_ERRORS:
+            matches = re.findall(pattern, text)
+            error_count += len(matches)
+
+        # Also count lines that are completely garbled
+        # (more than 50% non-printable/non-ASCII characters)
+        lines = text.split('\n')
+        for line in lines:
+            if len(line) > 5:  # Only check lines with meaningful length
+                non_ascii_ratio = sum(1 for c in line if ord(c) > 127) / len(line)
+                if non_ascii_ratio > 0.5:
+                    error_count += 1
+
+        return error_count
+
+    @staticmethod
+    def estimate_quality(error_count: int, text_length: int) -> float:
+        """
+        Estimate OCR quality as a score between 0.0 and 1.0.
+
+        Quality = 1.0 - (error_count / max(text_length / 10, 1))
+        Clamped to [0.0, 1.0]
+
+        A longer text with same error count is higher quality.
+
+        Args:
+            error_count: Number of detected errors
+            text_length: Length of extracted text
+
+        Returns:
+            Quality score from 0.0 (very low) to 1.0 (excellent)
+        """
+        if text_length == 0:
+            return 0.0
+
+        # Estimate: ~1 error per 10 characters in poor OCR
+        estimated_max_errors = max(text_length / 10, 1)
+        quality = 1.0 - (error_count / estimated_max_errors)
+
+        # Clamp to [0.0, 1.0]
+        return max(0.0, min(1.0, quality))
+
+
+class OCRPipeline:
+    """Pipeline for OCR and embedded text extraction."""
+
+    def __init__(self):
+        """Initialize OCR pipeline with available engines."""
+        self.paddle_ocr = None
+        if PaddleOCR is not None:
+            try:
+                self.paddle_ocr = PaddleOCR(use_textline_orientation=True, lang='en')
+                logger.info("PaddleOCR initialized successfully")
+            except Exception as e:
+                logger.warning(f"Failed to initialize PaddleOCR: {e}")
+
+    @staticmethod
+    def check_embedded_text(pdf_path: str) -> bool:
+        """
+        Check if a PDF has embedded text.
+
+        Args:
+            pdf_path: Path to the PDF file
+
+        Returns:
+            True if the PDF has extractable embedded text, False otherwise
+        """
+        try:
+            with open(pdf_path, 'rb') as f:
+                reader = pypdf.PdfReader(f)
+                if not reader.pages:
+                    return False
+
+                for page in reader.pages:
+                    text = page.extract_text()
+                    if text and text.strip():
                         return True
 
-            return False
-
+                return False
         except Exception as e:
-            logger.error(f"Error checking embedded text in {pdf_path}: {e}")
+            logger.warning(f"Error checking embedded text: {e}")
             return False
 
     def run_ocr_tesseract(self, image_path: str) -> Tuple[str, float, int]:
         """
-        Run OCR using Tesseract.
+        Run Tesseract OCR on an image.
 
         Args:
-            image_path: Path to image file.
+            image_path: Path to the image file
 
         Returns:
-            Tuple of (extracted_text, confidence_score, error_count).
-            On exception: ("", 0.0, 9999).
+            Tuple of (extracted_text, quality_score, error_count)
+            Returns ("", 0.0, 9999) on failure
         """
+        if pytesseract is None:
+            logger.error("Tesseract not available - pytesseract not installed")
+            return "", 0.0, 9999
+
         try:
-            text = pytesseract.image_to_string(image_path, lang="eng")
+            image = cv2.imread(image_path)
+            if image is None:
+                logger.error(f"Failed to read image: {image_path}")
+                return "", 0.0, 9999
 
-            # Count errors
+            # Preprocess image
+            preprocessed = ImagePreprocessor.preprocess(image)
+
+            # Run Tesseract
+            text = pytesseract.image_to_string(preprocessed, lang="eng")
+
+            if not text or not text.strip():
+                return "", 0.0, 0
+
+            # Count errors and estimate quality
             error_count = OCRErrorDetector.count_errors(text)
-
-            # Estimate quality
             quality = OCRErrorDetector.estimate_quality(error_count, len(text))
+
+            logger.info(
+                f"Tesseract OCR: {len(text)} chars, "
+                f"{error_count} errors, quality={quality:.2f}"
+            )
 
             return text, quality, error_count
 
         except Exception as e:
-            logger.error(f"Tesseract OCR failed for {image_path}: {e}")
+            logger.error(f"Tesseract OCR failed: {e}")
             return "", 0.0, 9999
 
     def run_ocr_paddle(self, image_path: str) -> Tuple[str, float, int]:
         """
-        Run OCR using PaddleOCR.
+        Run PaddleOCR on an image.
 
         Args:
-            image_path: Path to image file.
+            image_path: Path to the image file
 
         Returns:
-            Tuple of (extracted_text, confidence_score, error_count).
-            On exception: ("", 0.0, 9999).
+            Tuple of (extracted_text, quality_score, error_count)
+            Returns ("", 0.0, 9999) on failure
         """
+        if self.paddle_ocr is None:
+            logger.error("PaddleOCR not available")
+            return "", 0.0, 9999
+
         try:
-            if self.paddle_ocr is None:
-                logger.error("PaddleOCR not initialized")
+            image = cv2.imread(image_path)
+            if image is None:
+                logger.error(f"Failed to read image: {image_path}")
                 return "", 0.0, 9999
 
-            result = self.paddle_ocr.ocr(image_path, cls=True)
+            # Preprocess image
+            preprocessed = ImagePreprocessor.preprocess(image)
 
-            # Extract text from result
-            # PaddleOCR returns: [[[bbox_points], [text, confidence]], ...]
+            # Run PaddleOCR
+            result = self.paddle_ocr.ocr(preprocessed, cls=True)
+
+            # Extract text from result structure
+            # PaddleOCR returns: [[[bbox], [text, confidence]], ...]
             if result and result[0]:
-                text_parts = []
-                for line in result[0]:
-                    # Each line is [bbox, [text, confidence]]
-                    if isinstance(line, (tuple, list)) and len(line) >= 2:
-                        # line[1] could be [text, confidence] or (text, confidence)
-                        text_item = line[1]
-                        if isinstance(text_item, (list, tuple)):
-                            text_parts.append(str(text_item[0]))
-                        else:
-                            text_parts.append(str(text_item))
-                text = "\n".join(text_parts)
+                text = "\n".join([line[1][0] for line in result[0]])
             else:
-                text = ""
+                return "", 0.0, 0
 
-            # Count errors
+            if not text or not text.strip():
+                return "", 0.0, 0
+
+            # Count errors and estimate quality
             error_count = OCRErrorDetector.count_errors(text)
-
-            # Estimate quality
             quality = OCRErrorDetector.estimate_quality(error_count, len(text))
+
+            logger.info(
+                f"PaddleOCR: {len(text)} chars, "
+                f"{error_count} errors, quality={quality:.2f}"
+            )
 
             return text, quality, error_count
 
         except Exception as e:
-            logger.error(f"PaddleOCR failed for {image_path}: {e}")
+            logger.error(f"PaddleOCR failed: {e}")
             return "", 0.0, 9999
 
-    def run_multi_pass_ocr(self, image_path: str) -> Tuple[str, str, float, int]:
+    def run_ocr(self, image_path: str, prefer_engine: str = 'tesseract') -> Tuple[str, float, int]:
         """
-        Run multi-pass OCR with fallback strategy.
-
-        Pass 1: Tesseract (fast)
-        Pass 2: PaddleOCR if Tesseract confidence < 70%
+        Run OCR using the preferred engine, falling back to alternatives.
 
         Args:
-            image_path: Path to image file.
+            image_path: Path to the image file
+            prefer_engine: 'tesseract' or 'paddle' (default: tesseract)
 
         Returns:
-            Tuple of (ocr_text, engine_used, confidence, error_count).
+            Tuple of (extracted_text, quality_score, error_count)
         """
-        # Pass 1: Run Tesseract
-        text_t, quality_t, errors_t = self.run_ocr_tesseract(image_path)
-
-        logger.info(
-            f"Tesseract OCR: quality={quality_t:.2f}, errors={errors_t}, text_len={len(text_t)}"
-        )
-
-        # Pass 2: Try PaddleOCR if Tesseract quality is low
-        if quality_t < 0.7:
-            text_p, quality_p, errors_p = self.run_ocr_paddle(image_path)
-
-            logger.info(
-                f"PaddleOCR OCR: quality={quality_p:.2f}, errors={errors_p}, text_len={len(text_p)}"
-            )
-
-            # Use PaddleOCR if it has fewer errors
-            if errors_p < errors_t:
-                return text_p, "paddleocr", quality_p, errors_p
-
-        # Fallback to Tesseract
-        return text_t, "tesseract", quality_t, errors_t
+        if prefer_engine == 'paddle':
+            text, quality, errors = self.run_ocr_paddle(image_path)
+            if text:  # PaddleOCR succeeded
+                return text, quality, errors
+            # Fall back to Tesseract
+            return self.run_ocr_tesseract(image_path)
+        else:
+            # Default: try Tesseract first
+            text, quality, errors = self.run_ocr_tesseract(image_path)
+            if text:  # Tesseract succeeded
+                return text, quality, errors
+            # Fall back to PaddleOCR
+            return self.run_ocr_paddle(image_path)

@@ -1,77 +1,41 @@
-FROM python:3.11-slim as builder
+# Build context: src/backend
+FROM python:3.11-slim AS builder
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip wheel --no-cache-dir --no-deps --wheel-dir /app/wheels -r requirements.txt
+RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
 
-# Final stage
 FROM python:3.11-slim
 
-# Install runtime dependencies for OCR, image processing, and supervisor
-RUN apt-get update && apt-get install -y \
+# Runtime deps: Tesseract OCR, poppler (PDF utilities), supervisor
+# (runs API + Celery worker in one container), curl (healthcheck)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-eng \
-    libpoppler-cpp-dev \
     poppler-utils \
-    libmagic1 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
-    libgomp1 \
-    curl \
     supervisor \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy wheels from builder
-COPY --from=builder /app/wheels /wheels
-COPY --from=builder /app/requirements.txt .
+COPY --from=builder /wheels /wheels
+COPY requirements.txt .
+RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt \
+    && rm -rf /wheels
 
-# Install Python dependencies from wheels
-RUN pip install --no-cache /wheels/*
+COPY app ./app
+COPY supervisord.conf /etc/supervisor/supervisord.conf
 
-# Copy application
-COPY . .
+RUN mkdir -p /app/logs /app/uploads /library
 
-# Create necessary directories
-RUN mkdir -p /app/logs /app/uploads /library /etc/supervisor/conf.d
-
-# Create supervisor config for running both API and Celery worker
-RUN cat > /etc/supervisor/conf.d/pdf-library.conf << 'EOF'
-[supervisord]
-logfile=/app/logs/supervisord.log
-pidfile=/var/run/supervisord.pid
-nodaemon=true
-
-[program:api]
-command=gunicorn -w 4 -b 0.0.0.0:8000 -k uvicorn.workers.UvicornWorker app.main:app
-directory=/app
-autostart=true
-autorestart=true
-stderr_logfile=/app/logs/api.err
-stdout_logfile=/app/logs/api.log
-umask=0022
-
-[program:celery]
-command=celery -A app.worker.celery_app worker --loglevel=info --concurrency=2
-directory=/app
-autostart=true
-autorestart=true
-stderr_logfile=/app/logs/celery.err
-stdout_logfile=/app/logs/celery.log
-umask=0022
-EOF
-
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 EXPOSE 8000
 
-# Run supervisord to manage both API and Celery
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/../supervisord.conf"]
+CMD ["supervisord", "-c", "/etc/supervisor/supervisord.conf"]
